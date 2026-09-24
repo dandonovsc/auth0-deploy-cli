@@ -70,6 +70,65 @@ describe('#YAML context clients', () => {
     expect(context.assets.clients).to.deep.equal(target);
   });
 
+  it('should correctly load custom_login_page when AUTH0_INPUT_FILE is a relative path (regression #1475)', async () => {
+    const dir = path.join(testDataDir, 'yaml', 'clients-relative');
+    cleanThenMkdir(dir);
+
+    const yaml = `
+    clients:
+      - name: "customLoginClient"
+        app_type: "spa"
+        custom_login_page: "./customLoginClient_custom_login_page.html"
+    `;
+
+    const yamlFile = path.join(dir, 'clients.yaml');
+    const clientsPath = path.join(dir, 'clients');
+    fs.writeFileSync(yamlFile, yaml);
+    fs.ensureDirSync(clientsPath);
+    fs.writeFileSync(
+      path.join(clientsPath, 'customLoginClient_custom_login_page.html'),
+      'html code'
+    );
+
+    // Use a relative AUTH0_INPUT_FILE to trigger the double-resolution bug in the old code.
+    const relativeYamlFile = path.relative(process.cwd(), yamlFile);
+    const config = { AUTH0_INPUT_FILE: relativeYamlFile };
+    const context = new Context(config, mockMgmtClient());
+    await context.loadAssetsFromLocal();
+
+    const client = context.assets.clients.find((c) => c.name === 'customLoginClient');
+    expect(client.custom_login_page).to.equal('html code');
+  });
+
+  it('should throw when custom_login_page path resolves outside the config directory', async () => {
+    const dir = path.join(testDataDir, 'yaml', 'clients-traversal-warn');
+    cleanThenMkdir(dir);
+
+    // "../../outside-login.html" from inside clients/ escapes the config root.
+    const outsideFile = path.join(testDataDir, 'yaml', 'outside-login.html');
+    fs.writeFileSync(outsideFile, 'outside content');
+
+    const yaml = `
+    clients:
+      - name: "traversalClient"
+        app_type: "spa"
+        custom_login_page: "../../outside-login.html"
+    `;
+
+    const yamlFile = path.join(dir, 'clients.yaml');
+    const clientsPath = path.join(dir, 'clients');
+    fs.writeFileSync(yamlFile, yaml);
+    fs.ensureDirSync(clientsPath);
+
+    const config = { AUTH0_INPUT_FILE: yamlFile };
+    const context = new Context(config, mockMgmtClient());
+    try {
+      await expect(context.loadAssetsFromLocal()).to.be.rejectedWith('Path traversal blocked');
+    } finally {
+      fs.removeSync(outsideFile);
+    }
+  });
+
   it('should dump clients', async () => {
     const dir = path.join(testDataDir, 'yaml', 'clientsDump');
     cleanThenMkdir(dir);

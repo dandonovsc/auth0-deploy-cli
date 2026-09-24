@@ -334,12 +334,15 @@ export const decodeBase64ToCertString = (base64Cert: string) => {
 // Format connection options by converting client IDs to client names for SAML connections
 export const getFormattedOptions = (connection, clients) => {
   try {
+    const { idpinitiated } = connection.options;
     return {
       options: {
         ...connection.options,
         idpinitiated: {
-          ...connection.options.idpinitiated,
-          client_id: convertClientIdToName(connection.options.idpinitiated.client_id, clients),
+          ...idpinitiated,
+          ...(idpinitiated.client_id && {
+            client_id: convertClientIdToName(idpinitiated.client_id, clients),
+          }),
         },
       },
     };
@@ -347,3 +350,21 @@ export const getFormattedOptions = (connection, clients) => {
     return {};
   }
 };
+
+/**
+ * Asserts that `resolvedPath` is inside `configRoot`.
+ * Throws a hard error on path traversal attempts so there is a single,
+ * canonical enforcement point across all handlers.
+ */
+export function assertInsideConfigRoot(
+  input: string,
+  resolvedPath: string,
+  configRoot: string
+): void {
+  if (!resolvedPath.startsWith(configRoot + path.sep)) {
+    throw new Error(
+      `Path traversal blocked: "${input}" resolves to "${resolvedPath}" which is outside the config directory "${configRoot}". ` +
+        `Move the file inside your config directory.`
+    );
+  }
+}

@@ -8,6 +8,7 @@ import {
   isFile,
   loadJSON,
   nomalizedYAMLPath,
+  assertInsideConfigRoot,
 } from '../../../utils';
 import { DirectoryHandler } from '.';
 import DirectoryContext from '..';
@@ -47,13 +48,13 @@ function parse(context: DirectoryContext): ParsedBranding {
     });
 
     const normalizedPathArray = nomalizedYAMLPath(definition.body);
-    definition.body = loadFileAndReplaceKeywords(
-      path.join(brandingTemplatesFolder, ...normalizedPathArray),
-      {
-        mappings: context.mappings,
-        disableKeywordReplacement: context.disableKeywordReplacement,
-      }
-    );
+    const resolvedBodyFile = path.resolve(brandingTemplatesFolder, ...normalizedPathArray);
+    const configRoot = path.resolve(context.filePath);
+    assertInsideConfigRoot(definition.body, resolvedBodyFile, configRoot);
+    definition.body = loadFileAndReplaceKeywords(resolvedBodyFile, {
+      mappings: context.mappings,
+      disableKeywordReplacement: context.disableKeywordReplacement,
+    });
     return definition;
   }, {});
 

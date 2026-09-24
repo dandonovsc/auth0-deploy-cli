@@ -1,4 +1,5 @@
 import path from 'path';
+import fs from 'fs-extra';
 import { expect } from 'chai';
 import { constants } from '../../../src/tools';
 
@@ -715,5 +716,38 @@ describe('#directory context prompts', () => {
         },
       ],
     });
+  });
+
+  it('should throw when prompt partial template path resolves outside the config directory', async () => {
+    const repoDir = path.join(testDataDir, 'directory', 'prompts-traversal-warn');
+    // "../../outside-partial.liquid" from inside prompts/ escapes the config root.
+    const outsideFile = path.join(testDataDir, 'directory', 'outside-partial.liquid');
+    fs.writeFileSync(outsideFile, '<div>outside content</div>');
+
+    const files = {
+      [constants.PROMPTS_DIRECTORY]: {
+        'partials.json': JSON.stringify({
+          login: [
+            {
+              login: [
+                {
+                  name: 'form-content-start',
+                  template: '../../outside-partial.liquid',
+                },
+              ],
+            },
+          ],
+        }),
+      },
+    };
+    createDir(repoDir, files);
+
+    const config = { AUTH0_INPUT_FILE: repoDir };
+    const context = new Context(config, mockMgmtClient());
+    try {
+      await expect(context.loadAssetsFromLocal()).to.be.rejectedWith('Path traversal blocked');
+    } finally {
+      fs.removeSync(outsideFile);
+    }
   });
 });

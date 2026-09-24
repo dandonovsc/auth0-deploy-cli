@@ -87,6 +87,29 @@ describe('#directory context email templates', () => {
       .and.have.property('message', errorMessage);
   });
 
+  it('should throw when email template body path resolves outside the config directory', async () => {
+    const repoDir = path.join(testDataDir, 'directory', 'emailTemplates-traversal-warn');
+    // "../../outside-email.html.liquid" from inside emails/ escapes the config root.
+    const outsideFile = path.join(testDataDir, 'directory', 'outside-email.html.liquid');
+    fs.writeFileSync(outsideFile, 'outside content');
+
+    const files = {
+      [constants.EMAIL_TEMPLATES_DIRECTORY]: {
+        'verify_email.json':
+          '{ "template": "verify_email", "enabled": true, "from": "test@test.com", "body": "../../outside-email.html.liquid" }',
+      },
+    };
+    createDir(repoDir, files);
+
+    const config = { AUTH0_INPUT_FILE: repoDir };
+    const context = new Context(config, mockMgmtClient());
+    try {
+      await expect(context.loadAssetsFromLocal()).to.be.rejectedWith('Path traversal blocked');
+    } finally {
+      fs.removeSync(outsideFile);
+    }
+  });
+
   it('should dump email templates', async () => {
     const dir = path.join(testDataDir, 'directory', 'emailTemplatesDump');
     cleanThenMkdir(dir);

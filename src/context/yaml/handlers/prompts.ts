@@ -6,7 +6,7 @@ import YAMLContext from '..';
 import { constants } from '../../../tools';
 import { ParsedAsset } from '../../../types';
 import { Prompts, ScreenRenderer } from '../../../tools/auth0/handlers/prompts';
-import { loadJSON } from '../../../utils';
+import { loadJSON, assertInsideConfigRoot } from '../../../utils';
 import log from '../../../logger';
 
 type ParsedPrompts = ParsedAsset<'prompts', Prompts>;
@@ -35,9 +35,11 @@ const loadScreenRenderers = (
     Object.entries(screens).forEach(([, fileName]) => {
       const filePath = fileName;
 
-      try {
-        const rendererFile = path.join(context.basePath, filePath);
+      const configRoot = path.resolve(context.basePath);
+      const rendererFile = path.resolve(context.basePath, filePath);
+      assertInsideConfigRoot(filePath, rendererFile, configRoot);
 
+      try {
         const rendererData = loadJSON(rendererFile, {
           mappings: context.mappings,
           disableKeywordReplacement: context.disableKeywordReplacement,

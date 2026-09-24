@@ -1,6 +1,6 @@
-import { omit } from 'lodash';
+import { omit, isEqual, pick } from 'lodash';
 import { Management } from 'auth0';
-import DefaultHandler, { order } from './default';
+import DefaultHandler, { order, retryWithExponentialBackoff } from './default';
 import { calculateChanges } from '../../calculateChanges';
 import log from '../../../logger';
 import { Asset, Assets, CalculatedChanges } from '../../../types';
@@ -10,6 +10,13 @@ import { isDryRun } from '../../utils';
 import { Client } from './clients';
 import { Connection } from './connections';
 import { ClientGrant } from './clientGrants';
+
+// Org sub-resources are skipped when the tenant can't read them: the EA feature is off
+// (feature_not_enabled, returned as 400 or 403) or the token lacks scope (403). The SDK
+// puts the API code on `err.body.errorCode`, not `err.errorCode`.
+function isOrgSubresourceUnavailable(err: any): boolean {
+  return err?.statusCode === 403 || err?.body?.errorCode === 'feature_not_enabled';
+}
 
 export const schema = {
   type: 'array',
@@ -187,12 +194,18 @@ export default class OrganizationsHandler extends DefaultHandler {
 
     const createdId = created.id;
 
+    const retryConfig = this.getRetryConfig();
+
     if (typeof org.connections !== 'undefined' && org.connections.length > 0) {
       await Promise.all(
         org.connections.map((conn) =>
-          this.client.organizations.connections.create(
-            createdId,
-            conn as Management.CreateOrganizationAllConnectionRequestParameters
+          retryWithExponentialBackoff(
+            () =>
+              this.client.organizations.connections.create(
+                createdId,
+                conn as Management.CreateOrganizationAllConnectionRequestParameters
+              ),
+            retryConfig
           )
         )
       );
@@ -262,12 +275,13 @@ export default class OrganizationsHandler extends DefaultHandler {
   }
 
   async updateOrganization(org, organizations) {
+    const existingOrg = organizations.find((orgToUpdate) => orgToUpdate.name === org.name);
     const {
       connections: existingConnections,
       client_grants: existingClientGrants,
       discovery_domains: existingDiscoveryDomains,
       clients: existingOrgClients = [],
-    } = await organizations.find((orgToUpdate) => orgToUpdate.name === org.name);
+    } = existingOrg;
 
     const params = { id: org.id };
     const {
@@ -284,7 +298,14 @@ export default class OrganizationsHandler extends DefaultHandler {
     delete org.discovery_domains;
     delete org.clients;
 
-    await this.client.organizations.update(params.id, org);
+    // Only PATCH if top-level properties actually differ from the existing state.
+    // Compare only the keys present in the desired config against those same keys
+    // on the remote org, so that fields the user didn't specify are not considered.
+    let changed = false;
+    if (!isEqual(org, pick(existingOrg, Object.keys(org)))) {
+      await this.client.organizations.update(params.id, org);
+      changed = true;
+    }
 
     // organization connections
     const connectionsToRemove = existingConnections.filter(
@@ -306,53 +327,69 @@ export default class OrganizationsHandler extends DefaultHandler {
       )
     );
 
+    if (
+      connectionsToUpdate.length > 0 ||
+      connectionsToAdd.length > 0 ||
+      connectionsToRemove.length > 0
+    ) {
+      changed = true;
+    }
+
+    const retryConfig = this.getRetryConfig();
+
     // Handle updates first
     await Promise.all(
       connectionsToUpdate.map((conn: Management.CreateOrganizationAllConnectionRequestParameters) =>
-        this.client.organizations.connections
-          .update(params.id, conn.connection_id, {
-            organization_connection_name: conn.organization_connection_name,
-            assign_membership_on_login: conn.assign_membership_on_login,
-            show_as_button: conn.show_as_button,
-            is_signup_enabled: conn.is_signup_enabled,
-            is_enabled: conn.is_enabled,
-            organization_access_level: conn.organization_access_level,
-          })
-          .catch(() => {
-            throw new Error(
-              `Problem updating Enabled Connection ${conn.connection_id} for organizations ${params.id}`
-            );
-          })
+        retryWithExponentialBackoff(
+          () =>
+            this.client.organizations.connections.update(params.id, conn.connection_id, {
+              organization_connection_name: conn.organization_connection_name,
+              assign_membership_on_login: conn.assign_membership_on_login,
+              show_as_button: conn.show_as_button,
+              is_signup_enabled: conn.is_signup_enabled,
+              is_enabled: conn.is_enabled,
+              organization_access_level: conn.organization_access_level,
+            }),
+          retryConfig
+        ).catch(() => {
+          throw new Error(
+            `Problem updating Enabled Connection ${conn.connection_id} for organizations ${params.id}`
+          );
+        })
       )
     );
 
     await Promise.all(
       connectionsToAdd.map((conn: Management.CreateOrganizationAllConnectionRequestParameters) =>
-        this.client.organizations.connections
-          .create(
-            params.id,
-            omit<Management.OrganizationConnection>(
-              conn,
-              'connection'
-            ) as Management.AddOrganizationConnectionRequestContent
-          )
-          .catch(() => {
-            throw new Error(
-              `Problem adding Enabled Connection ${conn.connection_id} for organizations ${params.id}`
-            );
-          })
+        retryWithExponentialBackoff(
+          () =>
+            this.client.organizations.connections.create(
+              params.id,
+              omit<Management.OrganizationConnection>(
+                conn,
+                'connection'
+              ) as Management.AddOrganizationConnectionRequestContent
+            ),
+          retryConfig
+        ).catch(() => {
+          throw new Error(
+            `Problem adding Enabled Connection ${conn.connection_id} for organizations ${params.id}`
+          );
+        })
       )
     );
 
     await Promise.all(
       connectionsToRemove.map((conn: Management.OrganizationConnection) =>
-        this.client.organizations.connections
-          .delete(params.id, conn.connection_id as string)
-          .catch(() => {
-            throw new Error(
-              `Problem removing Enabled Connection ${conn.connection_id} for organizations ${params.id}`
-            );
-          })
+        retryWithExponentialBackoff(
+          () =>
+            this.client.organizations.connections.delete(params.id, conn.connection_id as string),
+          retryConfig
+        ).catch(() => {
+          throw new Error(
+            `Problem removing Enabled Connection ${conn.connection_id} for organizations ${params.id}`
+          );
+        })
       )
     );
 
@@ -370,6 +407,10 @@ export default class OrganizationsHandler extends DefaultHandler {
         ?.map((clientGrant) => ({
           grant_id: this.getClientGrantIDByClientName(clientGrant.client_id),
         })) || [];
+
+    if (orgClientGrantsToAdd.length > 0 || orgClientGrantsToRemove.length > 0) {
+      changed = true;
+    }
 
     // Handle updates first
     await Promise.all(
@@ -419,6 +460,10 @@ export default class OrganizationsHandler extends DefaultHandler {
         })
         .filter(Boolean) || [];
 
+    if (orgDiscoveryDomainsToUpdate.length > 0 || orgDiscoveryDomainsToAdd.length > 0) {
+      changed = true;
+    }
+
     for (const { id, domain, ...updateParams } of orgDiscoveryDomainsToUpdate) {
       try {
         await this.updateOrganizationDiscoveryDomain(params.id, id, domain, updateParams);
@@ -448,6 +493,7 @@ export default class OrganizationsHandler extends DefaultHandler {
         this.config('AUTH0_ALLOW_DELETE') === 'true' ||
         this.config('AUTH0_ALLOW_DELETE') === true
       ) {
+        changed = true;
         for (const domain of orgDiscoveryDomainsToRemove) {
           try {
             await this.deleteOrganizationDiscoveryDomain(params.id, domain.domain, domain.id);
@@ -499,6 +545,7 @@ export default class OrganizationsHandler extends DefaultHandler {
       .filter((oc) => !!oc.client_id);
 
     if (orgClientsToAdd.length > 0) {
+      changed = true;
       await this.createOrganizationClients(params.id, orgClientsToAdd).catch((err) => {
         throw new Error(`Problem adding org clients for organization ${params.id}\n${err}`);
       });
@@ -509,6 +556,7 @@ export default class OrganizationsHandler extends DefaultHandler {
         this.config('AUTH0_ALLOW_DELETE') === 'true' ||
         this.config('AUTH0_ALLOW_DELETE') === true
       ) {
+        changed = true;
         await this.deleteOrganizationClients(params.id, orgClientsToRemove).catch((err) => {
           throw new Error(`Problem removing org clients for organization ${params.id}\n${err}`);
         });
@@ -521,6 +569,9 @@ export default class OrganizationsHandler extends DefaultHandler {
       }
     }
 
+    if (orgClientsToUpdate.length > 0) {
+      changed = true;
+    }
     await Promise.all(
       orgClientsToUpdate.map((oc) =>
         this.client.organizations.clients
@@ -535,7 +586,7 @@ export default class OrganizationsHandler extends DefaultHandler {
       )
     );
 
-    return params;
+    return changed ? params : null;
   }
 
   getClientGrantIDByClientName(clientsName: string): string {
@@ -580,8 +631,10 @@ export default class OrganizationsHandler extends DefaultHandler {
         generator: (item) =>
           this.updateOrganization(item, orgs)
             .then((data) => {
-              this.didUpdate(data);
-              this.updated += 1;
+              if (data) {
+                this.didUpdate(data);
+                this.updated += 1;
+              }
             })
             .catch((err) => {
               throw new Error(`Problem updating ${this.type} ${this.objString(item)}\n${err}`);
@@ -796,9 +849,9 @@ export default class OrganizationsHandler extends DefaultHandler {
       if (err.statusCode === 404 || err.statusCode === 501) {
         return null;
       }
-      if (err.statusCode === 403 || err.errorCode === 'feature_not_enabled') {
+      if (isOrgSubresourceUnavailable(err)) {
         log.debug(
-          'Organization Discovery domains are not enabled for this tenant. Please verify `scope` or contact Auth0 support to enable this feature.'
+          `Skipping organization discovery domains (${err?.body?.errorCode ?? err.statusCode}).`
         );
         return null;
       }
@@ -887,10 +940,8 @@ export default class OrganizationsHandler extends DefaultHandler {
       if (err.statusCode === 404 || err.statusCode === 501) {
         return null;
       }
-      if (err.statusCode === 403 || err.errorCode === 'feature_not_enabled') {
-        log.debug(
-          'Org-to-app entitlement is not enabled for this tenant. Skipping org-client associations.'
-        );
+      if (isOrgSubresourceUnavailable(err)) {
+        log.debug(`Skipping org-client associations (${err?.body?.errorCode ?? err.statusCode}).`);
         return null;
       }
       throw err;

@@ -6,7 +6,7 @@ import { YAMLHandler } from '.';
 import YAMLContext from '..';
 import { ParsedAsset } from '../../../types';
 import { Flow } from '../../../tools/auth0/handlers/flows';
-import { loadJSON, sanitize } from '../../../utils';
+import { loadJSON, sanitize, assertInsideConfigRoot } from '../../../utils';
 import { constants } from '../../../tools';
 
 type ParsedFlows = ParsedAsset<'flows', Flow[]>;
@@ -18,6 +18,9 @@ async function parse(context: YAMLContext): Promise<ParsedFlows> {
 
   const parsedFlows = flows.map((flow: Flow) => {
     const flowFile = path.join(context.basePath, flow.body);
+    const configRoot = path.resolve(context.basePath);
+    const resolvedFlowFile = path.resolve(flowFile);
+    assertInsideConfigRoot(flow.body, resolvedFlowFile, configRoot);
 
     const parsedFlowBody = loadJSON(flowFile, {
       mappings: context.mappings,

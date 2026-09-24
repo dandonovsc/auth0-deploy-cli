@@ -410,4 +410,32 @@ describe('#YAML context prompts', () => {
       use_page_template: true,
     });
   });
+
+  it('should throw when screen renderer file path resolves outside the config directory', async () => {
+    const dir = path.join(testDataDir, 'yaml', 'prompts-traversal-warn');
+    cleanThenMkdir(dir);
+
+    // "../../outside-renderer.json" from basePath escapes the config root.
+    const outsideFile = path.join(testDataDir, 'outside-renderer.json');
+    fs.writeFileSync(outsideFile, JSON.stringify({ test: 'outside' }));
+
+    const yaml = `
+      prompts:
+        identifier_first: true
+        screenRenderers:
+          - login:
+              login-id: ../../outside-renderer.json
+    `;
+
+    const yamlFile = path.join(dir, 'config.yaml');
+    fs.writeFileSync(yamlFile, yaml);
+
+    const config = { AUTH0_INPUT_FILE: yamlFile };
+    const context = new Context(config, mockMgmtClient());
+    try {
+      await expect(context.loadAssetsFromLocal()).to.be.rejectedWith('Path traversal blocked');
+    } finally {
+      fs.removeSync(outsideFile);
+    }
+  });
 });

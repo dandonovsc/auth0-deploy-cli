@@ -1,8 +1,15 @@
 import path from 'path';
 import fs from 'fs-extra';
-import { constants } from '../../../tools';
+import { constants, loadFileAndReplaceKeywords } from '../../../tools';
 
-import { getFiles, existsMustBeDir, dumpJSON, loadJSON, sanitize } from '../../../utils';
+import {
+  getFiles,
+  existsMustBeDir,
+  dumpJSON,
+  loadJSON,
+  sanitize,
+  assertInsideConfigRoot,
+} from '../../../utils';
 import log from '../../../logger';
 import { DirectoryHandler } from '.';
 import DirectoryContext from '..';
@@ -24,7 +31,18 @@ function parse(context: DirectoryContext): ParsedHooks {
       }),
     };
     if (hook.script) {
-      hook.script = context.loadFile(hook.script, constants.HOOKS_DIRECTORY);
+      const normalizedScript = hook.script.replace(/\\/g, '/');
+      const configRoot = path.resolve(context.filePath);
+      const resolvedPath = path.resolve(
+        context.filePath,
+        constants.HOOKS_DIRECTORY,
+        normalizedScript
+      );
+      assertInsideConfigRoot(hook.script, resolvedPath, configRoot);
+      hook.script = loadFileAndReplaceKeywords(resolvedPath, {
+        mappings: context.mappings,
+        disableKeywordReplacement: context.disableKeywordReplacement,
+      });
     }
 
     hook.name = hook.name.toLowerCase().replace(/\s/g, '-');

@@ -11,6 +11,7 @@ import {
   loadJSON,
   sanitize,
   clearClientArrays,
+  assertInsideConfigRoot,
 } from '../../../utils';
 import { ParsedAsset } from '../../../types';
 import { DirectoryHandler } from '.';
@@ -33,10 +34,12 @@ function parse(context: DirectoryContext): ParsedClients {
       });
 
       if (client.custom_login_page) {
-        const htmlFileName = path.join(clientsFolder, client.custom_login_page);
+        const configRoot = path.resolve(context.filePath);
+        const resolvedLoginPage = path.resolve(clientsFolder, client.custom_login_page);
 
-        if (isFile(htmlFileName)) {
-          client.custom_login_page = loadFileAndReplaceKeywords(htmlFileName, {
+        if (isFile(resolvedLoginPage)) {
+          assertInsideConfigRoot(client.custom_login_page, resolvedLoginPage, configRoot);
+          client.custom_login_page = loadFileAndReplaceKeywords(resolvedLoginPage, {
             mappings: context.mappings,
             disableKeywordReplacement: context.disableKeywordReplacement,
           });

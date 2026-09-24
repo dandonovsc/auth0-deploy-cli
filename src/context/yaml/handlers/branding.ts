@@ -6,7 +6,7 @@ import { YAMLHandler } from '.';
 import YAMLContext from '..';
 import { Asset, ParsedAsset } from '../../../types';
 import log from '../../../logger';
-import { nomalizedYAMLPath } from '../../../utils';
+import { nomalizedYAMLPath, assertInsideConfigRoot } from '../../../utils';
 
 type BrandingTemplate = {
   template: string;
@@ -35,9 +35,12 @@ async function parse(context: YAMLContext): Promise<ParsedBranding> {
     (templateDefinition: BrandingTemplate): BrandingTemplate => {
       const normalizedPathArray = nomalizedYAMLPath(templateDefinition.body);
       const markupFile = path.join(context.basePath, ...normalizedPathArray);
+      const configRoot = path.resolve(context.basePath);
+      const resolvedMarkupFile = path.resolve(markupFile);
+      assertInsideConfigRoot(templateDefinition.body, resolvedMarkupFile, configRoot);
       return {
         template: templateDefinition.template,
-        body: loadFileAndReplaceKeywords(markupFile, {
+        body: loadFileAndReplaceKeywords(resolvedMarkupFile, {
           mappings: context.mappings,
           disableKeywordReplacement: context.disableKeywordReplacement,
         }),

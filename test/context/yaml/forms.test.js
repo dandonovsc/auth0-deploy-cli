@@ -39,6 +39,32 @@ describe('#YAML context forms', () => {
     expect(context.assets.forms).to.deep.equal(target);
   });
 
+  it('should throw when form body path resolves outside the config directory', async () => {
+    const dir = path.join(testDataDir, 'yaml', 'forms');
+    cleanThenMkdir(dir);
+
+    const outsideFile = path.join(testDataDir, 'outside-form.json');
+    fs.writeFileSync(outsideFile, '{"name": "outside form"}');
+
+    const yaml = `
+    forms:
+      -
+        name: "Outside Form"
+        body: ../../outside-form.json
+    `;
+
+    const yamlFile = path.join(dir, 'forms.yaml');
+    fs.writeFileSync(yamlFile, yaml);
+
+    const config = { AUTH0_INPUT_FILE: yamlFile };
+    const context = new Context(config, mockMgmtClient());
+    try {
+      await expect(context.loadAssetsFromLocal()).to.be.rejectedWith('Path traversal blocked');
+    } finally {
+      fs.removeSync(outsideFile);
+    }
+  });
+
   it('should dump forms', async () => {
     const dir = path.join(testDataDir, 'yaml', 'forms');
     cleanThenMkdir(dir);

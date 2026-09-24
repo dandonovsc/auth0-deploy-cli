@@ -38,7 +38,11 @@ async function parse(context: YAMLContext): Promise<ParsedConnections> {
             log.error(missingTemplateErrorMessage);
             throw new Error(missingTemplateErrorMessage);
           }
-          connection.options.email.body = context.loadFile(htmlFileName);
+          // Pass a path relative to basePath so context.loadFile() resolves it correctly.
+          // Passing htmlFileName (which already includes basePath) would cause double resolution.
+          connection.options.email.body = context.loadFile(
+            path.join(constants.CONNECTIONS_DIRECTORY, connection.options.email.body)
+          );
         }
 
         return connection;
@@ -59,6 +63,12 @@ async function dump(context: YAMLContext): Promise<ParsedConnections> {
     connections = connections.filter(
       (connection) => !excludedConnections.includes(connection.name)
     );
+  }
+
+  // Filter to included connections
+  const includedConnections = (context.assets.include && context.assets.include.connections) || [];
+  if (includedConnections.length) {
+    connections = connections.filter((connection) => includedConnections.includes(connection.name));
   }
 
   return {

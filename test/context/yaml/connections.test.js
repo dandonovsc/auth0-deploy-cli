@@ -189,6 +189,17 @@ describe('#YAML context connections', () => {
           },
         },
       },
+      {
+        name: 'someSamlConnectionIdpInitiatedDisabled',
+        strategy: 'samlp',
+        enabled_clients: [],
+        options: {
+          passwordPolicy: 'testPolicy',
+          idpinitiated: {
+            enabled: false,
+          },
+        },
+      },
     ];
 
     const target = [
@@ -238,6 +249,17 @@ describe('#YAML context connections', () => {
           },
         },
       },
+      {
+        name: 'someSamlConnectionIdpInitiatedDisabled',
+        strategy: 'samlp',
+        enabled_clients: [],
+        options: {
+          passwordPolicy: 'testPolicy',
+          idpinitiated: {
+            enabled: false,
+          },
+        },
+      },
     ];
 
     const clients = [
@@ -257,6 +279,69 @@ describe('#YAML context connections', () => {
     );
   });
 
+  it('should correctly load email body when AUTH0_INPUT_FILE is a relative path (regression #1475)', async () => {
+    // Reproduces the bug where context.loadFile() double-resolved the path when
+    // basePath was relative, causing ENOENT on "basePath/basePath/connections/email.html".
+    const dir = path.join(testDataDir, 'yaml', 'connections-relative-path');
+    cleanThenMkdir(dir);
+
+    const yaml = `
+    connections:
+      - name: "email"
+        strategy: "email"
+        options:
+          email:
+            body: "./email.html"
+    `;
+
+    const yamlFile = path.join(dir, 'tenant.yaml');
+    const connectionsPath = path.join(dir, 'connections');
+    fs.writeFileSync(yamlFile, yaml);
+    fs.ensureDirSync(connectionsPath);
+    fs.writeFileSync(path.join(connectionsPath, 'email.html'), 'html body content');
+
+    // Use a relative path for AUTH0_INPUT_FILE — this is exactly the scenario that
+    // triggered the regression. path.dirname of a relative file is itself relative,
+    // and the old code would then path.resolve(relativeBasePath, alreadyRelativeFullPath).
+    const relativeYamlFile = path.relative(process.cwd(), yamlFile);
+    const config = { AUTH0_INPUT_FILE: relativeYamlFile };
+    const context = new Context(config, mockMgmtClient());
+    await context.loadAssetsFromLocal();
+
+    expect(context.assets.connections[0].options.email.body).to.equal('html body content');
+  });
+
+  it('should throw when email body path resolves outside the config directory', async () => {
+    const dir = path.join(testDataDir, 'yaml', 'connections-traversal-warn');
+    cleanThenMkdir(dir);
+
+    // Place the target file one level above the config root so the traversal path
+    // "../../outside-email.html" (from inside connections/) escapes the config dir.
+    const outsideFile = path.join(testDataDir, 'yaml', 'outside-email.html');
+    fs.writeFileSync(outsideFile, 'outside content');
+
+    const yaml = `
+    connections:
+      - name: "email"
+        strategy: "email"
+        options:
+          email:
+            body: "../../outside-email.html"
+    `;
+
+    const yamlFile = path.join(dir, 'tenant.yaml');
+    fs.writeFileSync(yamlFile, yaml);
+    fs.ensureDirSync(path.join(dir, 'connections'));
+
+    const config = { AUTH0_INPUT_FILE: yamlFile };
+    const context = new Context(config, mockMgmtClient());
+    try {
+      await expect(context.loadAssetsFromLocal()).to.be.rejectedWith('Path traversal blocked');
+    } finally {
+      fs.removeSync(outsideFile);
+    }
+  });
+
   it('should not dump excluded connections', async () => {
     const dir = path.join(testDataDir, 'yaml', 'connectionsDumpExclude');
     cleanThenMkdir(dir);
@@ -270,6 +355,26 @@ describe('#YAML context connections', () => {
       { name: 'excludedConnection', strategy: 'waad' },
     ];
     context.assets.exclude = { connections: ['excludedConnection'] };
+
+    const dumped = await handler.dump(context);
+
+    expect(dumped.connections).to.have.length(1);
+    expect(dumped.connections[0].name).to.equal('includedConnection');
+  });
+
+  it('should only dump included connections', async () => {
+    const dir = path.join(testDataDir, 'yaml', 'connectionsDumpInclude');
+    cleanThenMkdir(dir);
+    const context = new Context(
+      { AUTH0_INPUT_FILE: path.join(dir, 'tenant.yaml') },
+      mockMgmtClient()
+    );
+
+    context.assets.connections = [
+      { name: 'includedConnection', strategy: 'waad' },
+      { name: 'unmanagedConnection', strategy: 'samlp' },
+    ];
+    context.assets.include = { connections: ['includedConnection'] };
 
     const dumped = await handler.dump(context);
 

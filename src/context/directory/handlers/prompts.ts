@@ -1,7 +1,14 @@
 import path from 'path';
 import { ensureDirSync, writeFileSync } from 'fs-extra';
 import { constants, loadFileAndReplaceKeywords } from '../../../tools';
-import { getFiles, dumpJSON, existsMustBeDir, isFile, loadJSON } from '../../../utils';
+import {
+  getFiles,
+  dumpJSON,
+  existsMustBeDir,
+  isFile,
+  loadJSON,
+  assertInsideConfigRoot,
+} from '../../../utils';
 import { DirectoryHandler } from '.';
 import DirectoryContext from '..';
 import { ParsedAsset } from '../../../types';
@@ -69,9 +76,13 @@ function parse(context: DirectoryContext): ParsedPrompts {
         (screenAcc, [screenName, items]) => {
           screenAcc[screenName as CustomPartialsScreenTypes] = items.reduce(
             (insertionAcc, { name, template }) => {
-              const templateFilePath = path.join(promptsDirectory, template);
-              insertionAcc[name] = isFile(templateFilePath)
-                ? loadFileAndReplaceKeywords(templateFilePath, {
+              const configRoot = path.resolve(context.filePath);
+              const resolvedTemplatePath = path.resolve(promptsDirectory, template);
+              if (isFile(resolvedTemplatePath)) {
+                assertInsideConfigRoot(template, resolvedTemplatePath, configRoot);
+              }
+              insertionAcc[name] = isFile(resolvedTemplatePath)
+                ? loadFileAndReplaceKeywords(resolvedTemplatePath, {
                     mappings: context.mappings,
                     disableKeywordReplacement: context.disableKeywordReplacement,
                   }).trim()

@@ -10,6 +10,7 @@ import {
   loadJSON,
   sanitize,
   mapClientID2NameSorted,
+  assertInsideConfigRoot,
 } from '../../../utils';
 
 import { DirectoryHandler } from '.';
@@ -70,14 +71,8 @@ function getDatabase(
         log.warn('Skipping invalid database configuration: ' + name);
       } else {
         const resolvedBase = path.resolve(configRoot);
-        const toLoad = path.resolve(folder, script);
-        if (!toLoad.startsWith(resolvedBase + path.sep)) {
-          log.warn(
-            `Support for absolute paths and paths outside the config root will be deprecated in a future version to improve the security of the tool. ` +
-              `Please update your configuration to use paths relative to the config directory. ` +
-              `Current absolute path used: ["${script}"]`
-          );
-        }
+        const toLoad = path.resolve(folder, script.replace(/\\/g, '/'));
+        assertInsideConfigRoot(script, toLoad, resolvedBase);
         database.options.customScripts[name] = loadFileAndReplaceKeywords(toLoad, mappingOpts);
       }
     });

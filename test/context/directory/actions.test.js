@@ -15,7 +15,7 @@ const actionFiles = {
       '/** @type {PostLoginAction} */ module.exports = async (event, context) => { console.log(@@replace@@); return {}; };',
     'action-one.json': `{
       "name": "action-one",
-      "code": "./local/testData/directory/test1/actions/code.js",
+      "code": "./actions/code.js",
       "runtime": "node12",
       "dependencies": [
         {
@@ -42,7 +42,7 @@ const actionFilesWin32 = {
       '/** @type {PostLoginAction} */ module.exports = async (event, context) => { console.log(@@replace@@); return {}; };',
     'action-one.json': `{
       "name": "action-one",
-      "code": "local\\\\testData\\\\directory\\\\test1\\\\actions\\\\code.js",
+      "code": "actions\\\\code.js",
       "runtime": "node12",
       "dependencies": [
         {
@@ -349,6 +349,58 @@ describe('#directory context actions', () => {
     const context = new Context(config, mockMgmtClient());
     await context.loadAssetsFromLocal();
     expect(context.assets.actions).to.deep.equal(target);
+  });
+
+  it('should not throw when action code path is relative and inside the config root', async () => {
+    const repoDir = path.join(testDataDir, 'directory', 'test-no-warn');
+    const files = {
+      [constants.ACTIONS_DIRECTORY]: {
+        'code.js': 'module.exports = () => {};',
+        'action-one.json': `{
+          "name": "action-one",
+          "code": "./actions/code.js",
+          "runtime": "node18",
+          "dependencies": [],
+          "secrets": [],
+          "status": "built",
+          "supported_triggers": [{ "id": "post-login", "version": "v3" }],
+          "deployed": true
+        }`,
+      },
+    };
+    createDir(repoDir, files);
+    const config = { AUTH0_INPUT_FILE: repoDir };
+    const context = new Context(config, mockMgmtClient());
+    await context.loadAssetsFromLocal(); // should not throw
+  });
+
+  it('should throw when action code path resolves outside the config root', async () => {
+    const repoDir = path.join(testDataDir, 'directory', 'test-traversal-warn');
+    const outsideFile = path.join(testDataDir, 'directory', 'outside-action-code.js');
+    fs.ensureDirSync(path.join(repoDir, constants.ACTIONS_DIRECTORY));
+    fs.writeFileSync(outsideFile, 'module.exports = () => {};');
+    const files = {
+      [constants.ACTIONS_DIRECTORY]: {
+        'action-one.json': `{
+          "name": "action-one",
+          "code": "../outside-action-code.js",
+          "runtime": "node18",
+          "dependencies": [],
+          "secrets": [],
+          "status": "built",
+          "supported_triggers": [{ "id": "post-login", "version": "v3" }],
+          "deployed": true
+        }`,
+      },
+    };
+    createDir(repoDir, files);
+    const config = { AUTH0_INPUT_FILE: repoDir };
+    const context = new Context(config, mockMgmtClient());
+    try {
+      await expect(context.loadAssetsFromLocal()).to.be.rejectedWith('Path traversal blocked');
+    } finally {
+      fs.removeSync(outsideFile);
+    }
   });
 
   it('should dump actions with modules', async () => {

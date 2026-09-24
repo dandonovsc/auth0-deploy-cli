@@ -14,6 +14,7 @@ import {
   mapClientID2NameSorted,
   encodeCertStringToBase64,
   getFormattedOptions,
+  assertInsideConfigRoot,
 } from '../../../utils';
 import { DirectoryHandler } from '.';
 import DirectoryContext from '..';
@@ -39,14 +40,16 @@ function parse(context: DirectoryContext): ParsedConnections {
 
       if (connection.strategy === 'email') {
         ensureProp(connection, 'options.email.body');
-        const htmlFileName = path.join(connectionsFolder, connection.options.email.body);
+        const configRoot = path.resolve(context.filePath);
+        const resolvedHtmlFile = path.resolve(connectionsFolder, connection.options.email.body);
 
-        if (!isFile(htmlFileName)) {
+        if (!isFile(resolvedHtmlFile)) {
           throw new Error(
-            `Passwordless email template purportedly located at ${htmlFileName} does not exist for connection. Ensure the existence of this file to proceed with deployment.`
+            `Passwordless email template purportedly located at ${resolvedHtmlFile} does not exist for connection. Ensure the existence of this file to proceed with deployment.`
           );
         }
-        connection.options.email.body = loadFileAndReplaceKeywords(htmlFileName, {
+        assertInsideConfigRoot(connection.options.email.body, resolvedHtmlFile, configRoot);
+        connection.options.email.body = loadFileAndReplaceKeywords(resolvedHtmlFile, {
           mappings: context.mappings,
           disableKeywordReplacement: context.disableKeywordReplacement,
         });
@@ -73,6 +76,12 @@ async function dump(context: DirectoryContext): Promise<void> {
     connections = connections.filter(
       (connection) => !excludedConnections.includes(connection.name)
     );
+  }
+
+  // Filter to included connections
+  const includedConnections = (context.assets.include && context.assets.include.connections) || [];
+  if (includedConnections.length) {
+    connections = connections.filter((connection) => includedConnections.includes(connection.name));
   }
 
   const connectionsFolder = path.join(context.filePath, constants.CONNECTIONS_DIRECTORY);
@@ -131,11 +140,23 @@ async function dump(context: DirectoryContext): Promise<void> {
     if (dumpedConnection.strategy === 'email') expectedFiles.add(`${connectionName}.html`);
   });
 
+  // With an include list configured, connections outside it are unmanaged, so limit pruning
+  // to the listed names rather than every file in the folder.
+  const prunableFiles = includedConnections.length
+    ? new Set(
+        includedConnections.flatMap((name) => [`${sanitize(name)}.json`, `${sanitize(name)}.html`])
+      )
+    : null;
+
   // Remove files that belong to connections no longer present (and not excluded)
   if (fs.existsSync(connectionsFolder)) {
     for (const existing of fs.readdirSync(connectionsFolder)) {
       const fullPath = path.join(connectionsFolder, existing);
-      if (fs.statSync(fullPath).isFile() && !expectedFiles.has(existing)) {
+      if (
+        fs.statSync(fullPath).isFile() &&
+        !expectedFiles.has(existing) &&
+        (prunableFiles === null || prunableFiles.has(existing))
+      ) {
         fs.removeSync(fullPath);
       }
     }

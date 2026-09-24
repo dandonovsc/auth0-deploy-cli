@@ -1,9 +1,16 @@
 /* eslint-disable consistent-return */
 import path from 'path';
 import fs from 'fs-extra';
-import { constants } from '../../../tools';
+import { constants, loadFileAndReplaceKeywords } from '../../../tools';
 
-import { getFiles, existsMustBeDir, loadJSON, sanitize, dumpJSON } from '../../../utils';
+import {
+  getFiles,
+  existsMustBeDir,
+  loadJSON,
+  sanitize,
+  dumpJSON,
+  assertInsideConfigRoot,
+} from '../../../utils';
 import log from '../../../logger';
 import { DirectoryHandler } from '.';
 import DirectoryContext from '..';
@@ -25,23 +32,15 @@ function parse(context: DirectoryContext): ParsedActions {
         disableKeywordReplacement: context.disableKeywordReplacement,
       }),
     };
-    const actionFolder = path.join(constants.ACTIONS_DIRECTORY, `${action.name}`);
-
     if (action.code) {
-      // Convert `action.code` path to Unix-style path by replacing backslashes and multiple slashes with a single forward slash, and remove leading drive letters or './'.
-      const unixPath = action.code.replace(/[\\/]+/g, '/').replace(/^([a-zA-Z]+:|\.\/)/, '');
-      if (fs.existsSync(unixPath)) {
-        // If the Unix-style path exists, load the file from that path
-        log.warn(
-          `Support for absolute paths and paths outside the config root will be deprecated in a future version to improve the security of the tool. ` +
-            `Please update your configuration to use paths relative to the config directory. ` +
-            `Current absolute path used: ["${action.code}"]`
-        );
-        action.code = context.loadFile(unixPath, actionFolder);
-      } else {
-        // Otherwise, load the file from the context's file path
-        action.code = context.loadFile(path.join(context.filePath, action.code), actionFolder);
-      }
+      const normalizedCode = action.code.replace(/\\/g, '/');
+      const configRoot = path.resolve(context.filePath);
+      const resolvedPath = path.resolve(context.filePath, normalizedCode);
+      assertInsideConfigRoot(action.code, resolvedPath, configRoot);
+      action.code = loadFileAndReplaceKeywords(resolvedPath, {
+        mappings: context.mappings,
+        disableKeywordReplacement: context.disableKeywordReplacement,
+      });
     }
 
     return action;

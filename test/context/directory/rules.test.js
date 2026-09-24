@@ -128,6 +128,24 @@ describe('#directory context rules', () => {
     );
   });
 
+  it('should throw when rule script path resolves outside the config root', async () => {
+    const repoDir = path.join(testDataDir, 'directory', 'rules-traversal-warn');
+    const outsideFile = path.join(testDataDir, 'directory', 'outside-rule.js');
+    fs.ensureDirSync(path.join(repoDir, constants.RULES_DIRECTORY));
+    fs.writeFileSync(outsideFile, 'function outside() {}');
+    const traversalRules = {
+      'somerule.json': '{ "name": "somerule", "enabled": true, "script": "../../outside-rule.js" }',
+    };
+    createDir(repoDir, { [constants.RULES_DIRECTORY]: traversalRules });
+    const config = { AUTH0_INPUT_FILE: repoDir };
+    const context = new Context(config, mockMgmtClient());
+    try {
+      await expect(context.loadAssetsFromLocal()).to.be.rejectedWith('Path traversal blocked');
+    } finally {
+      fs.removeSync(outsideFile);
+    }
+  });
+
   it('should not dump excluded rules', async () => {
     const dir = path.join(testDataDir, 'directory', 'rulesDumpExclude');
     cleanThenMkdir(dir);

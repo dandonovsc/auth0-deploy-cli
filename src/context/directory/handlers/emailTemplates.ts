@@ -4,7 +4,13 @@ import { existsSync } from 'fs';
 import { constants, loadFileAndReplaceKeywords } from '../../../tools';
 
 import log from '../../../logger';
-import { getFiles, existsMustBeDir, dumpJSON, loadJSON } from '../../../utils';
+import {
+  getFiles,
+  existsMustBeDir,
+  dumpJSON,
+  loadJSON,
+  assertInsideConfigRoot,
+} from '../../../utils';
 import { DirectoryHandler } from '.';
 import DirectoryContext from '..';
 import { Asset, ParsedAsset } from '../../../types';
@@ -42,6 +48,12 @@ function parse(context: DirectoryContext): ParsedEmailTemplates {
         `Skipping email template file ${meta.body} as missing the corresponding '.json' file`
       );
       return [];
+    }
+
+    if (meta.body !== undefined) {
+      const configRoot = path.resolve(context.filePath);
+      const resolvedTemplatePath = path.resolve(templateFilePath);
+      assertInsideConfigRoot(meta.body, resolvedTemplatePath, configRoot);
     }
 
     return {

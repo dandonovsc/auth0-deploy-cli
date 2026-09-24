@@ -1,8 +1,15 @@
 import path from 'path';
 import fs from 'fs-extra';
-import { constants } from '../../../tools';
+import { constants, loadFileAndReplaceKeywords } from '../../../tools';
 
-import { getFiles, existsMustBeDir, loadJSON, sanitize, dumpJSON } from '../../../utils';
+import {
+  getFiles,
+  existsMustBeDir,
+  loadJSON,
+  sanitize,
+  dumpJSON,
+  assertInsideConfigRoot,
+} from '../../../utils';
 import log from '../../../logger';
 import { DirectoryHandler } from '.';
 import DirectoryContext from '..';
@@ -24,22 +31,15 @@ function parse(context: DirectoryContext): ParsedActionModules {
         disableKeywordReplacement: context.disableKeywordReplacement,
       }),
     };
-    const moduleFolder = path.join(constants.ACTION_MODULES_DIRECTORY, `${module.name}`);
-
     if (module.code) {
-      // The `module.code` can be a file path. It needs to be loaded.
-      // It can be a relative path, so we need to handle both cases.
-      const unixPath = module.code.replace(/[\\/]+/g, '/').replace(/^([a-zA-Z]+:|\.\/)/, '');
-      if (fs.existsSync(unixPath)) {
-        log.warn(
-          `Support for absolute paths and paths outside the config root will be deprecated in a future version to improve the security of the tool. ` +
-            `Please update your configuration to use paths relative to the config directory. ` +
-            `Current absolute path used: ["${module.code}"]`
-        );
-        module.code = context.loadFile(unixPath, moduleFolder);
-      } else {
-        module.code = context.loadFile(path.join(context.filePath, module.code), moduleFolder);
-      }
+      const normalizedCode = module.code.replace(/\\/g, '/');
+      const configRoot = path.resolve(context.filePath);
+      const resolvedPath = path.resolve(context.filePath, normalizedCode);
+      assertInsideConfigRoot(module.code, resolvedPath, configRoot);
+      module.code = loadFileAndReplaceKeywords(resolvedPath, {
+        mappings: context.mappings,
+        disableKeywordReplacement: context.disableKeywordReplacement,
+      });
     }
 
     return module;

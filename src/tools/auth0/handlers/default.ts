@@ -1,4 +1,3 @@
-import { JSONApiResponse } from 'auth0';
 import ValidationError from '../../validationError';
 
 import {
@@ -30,12 +29,28 @@ export function order(value) {
   };
 }
 
+/**
+ * node-auth0 v7 removed the exported `JSONApiResponse` class, so we can no
+ * longer use `instanceof` to tell an SDK response envelope apart from a plain
+ * asset. Duck-type the `ApiResponse<T>` shape ({ data, status, headers })
+ * instead.
+ */
+function isApiResponseEnvelope(item: unknown): item is { data: Asset } {
+  return (
+    typeof item === 'object' &&
+    item !== null &&
+    'data' in item &&
+    'status' in item &&
+    'headers' in item
+  );
+}
+
 // Retry configuration constants
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_INITIAL_DELAY_MS = 1000; // 1 second
 const DEFAULT_MAX_DELAY_MS = 30000; // 30 seconds
 
-interface RetryOptions {
+export interface RetryOptions {
   maxRetries?: number;
   initialDelay?: number;
   maxDelay?: number;
@@ -50,7 +65,7 @@ interface RetryOptions {
  * @param options - Configuration options for retry behavior
  * @returns Promise that resolves with the function result or rejects after max retries
  */
-async function retryWithExponentialBackoff<T>(
+export async function retryWithExponentialBackoff<T>(
   fn: () => Promise<T>,
   options: RetryOptions = {}
 ): Promise<T> {
@@ -202,24 +217,42 @@ export default class APIHandler {
     return fn;
   }
 
+  /**
+   * Builds the exponential-backoff retry configuration for this handler from the
+   * shared `AUTH0_MAX_RETRIES` / `AUTH0_RETRY_INITIAL_DELAY_MS` /
+   * `AUTH0_RETRY_MAX_DELAY_MS` config keys. Exposed so that handlers which issue
+   * writes outside the default `processChanges` flow (e.g. organizations, which
+   * writes nested connections/grants directly) can wrap those calls in the same
+   * 429 backoff behaviour as the base handler.
+   */
+  getRetryConfig(): RetryOptions {
+    const retryConfig: RetryOptions = {
+      maxRetries: this.config('AUTH0_MAX_RETRIES') || DEFAULT_MAX_RETRIES,
+      initialDelay: this.config('AUTH0_RETRY_INITIAL_DELAY_MS') || DEFAULT_INITIAL_DELAY_MS,
+      maxDelay: this.config('AUTH0_RETRY_MAX_DELAY_MS') || DEFAULT_MAX_DELAY_MS,
+      onRetry: (error: any, attempt: number, delay: number) => {
+        log.warn(
+          `Rate limit hit for [${this.type}]. Retrying attempt ${attempt}/${
+            retryConfig.maxRetries
+          } after ${Math.round(delay / 1000)}s...`
+        );
+      },
+    };
+    return retryConfig;
+  }
+
   didDelete(item: Asset): void {
     log.info(`Deleted [${this.type}]: ${this.objString(item)}`);
   }
 
   didCreate(item: Asset): void {
-    if (typeof item === 'object' && item instanceof JSONApiResponse) {
-      log.info(`Created [${this.type}]: ${this.objString(item?.data)}`);
-    } else {
-      log.info(`Created [${this.type}]: ${this.objString(item)}`);
-    }
+    const payload = isApiResponseEnvelope(item) ? item.data : item;
+    log.info(`Created [${this.type}]: ${this.objString(payload)}`);
   }
 
   didUpdate(item: Asset): void {
-    if (typeof item === 'object' && item instanceof JSONApiResponse) {
-      log.info(`Updated [${this.type}]: ${this.objString(item?.data)}`);
-    } else {
-      log.info(`Updated [${this.type}]: ${this.objString(item)}`);
-    }
+    const payload = isApiResponseEnvelope(item) ? item.data : item;
+    log.info(`Updated [${this.type}]: ${this.objString(payload)}`);
   }
 
   objString(item: Asset): string {
@@ -256,6 +289,9 @@ export default class APIHandler {
       this.type === 'branding' ||
       this.type === 'emailProvider' ||
       this.type === 'guardianPhoneFactorSelectedProvider' ||
+      this.type === 'guardianPhoneFactorSettings' ||
+      this.type === 'guardianEmailFactorSettings' ||
+      this.type === 'guardianSettings' ||
       this.type === 'guardianPolicies' ||
       this.type === 'riskAssessment'
     ) {
@@ -310,7 +346,6 @@ export default class APIHandler {
       return calculateDryRunChanges({
         type: this.type,
         assets: typeAssets,
-        // @ts-ignore TODO: investigate what happens when `existing` is null
         existing,
         identifiers: this.identifiers,
         ignoreDryRunFields: this.getEffectiveIgnoreDryRunFields(),
@@ -348,7 +383,6 @@ export default class APIHandler {
     return calculateDryRunChanges({
       type: this.type,
       assets: typeAssets,
-      // @ts-ignore TODO: investigate what happens when `existing` is null
       existing,
       identifiers: this.identifiers,
       ignoreDryRunFields: this.getEffectiveIgnoreDryRunFields(),
@@ -398,18 +432,7 @@ export default class APIHandler {
     );
 
     // Set retry configuration from config
-    const retryConfig: RetryOptions = {
-      maxRetries: this.config('AUTH0_MAX_RETRIES') || DEFAULT_MAX_RETRIES,
-      initialDelay: this.config('AUTH0_RETRY_INITIAL_DELAY_MS') || DEFAULT_INITIAL_DELAY_MS,
-      maxDelay: this.config('AUTH0_RETRY_MAX_DELAY_MS') || DEFAULT_MAX_DELAY_MS,
-      onRetry: (error: any, attempt: number, delay: number) => {
-        log.warn(
-          `Rate limit hit for [${this.type}]. Retrying attempt ${attempt}/${
-            retryConfig.maxRetries
-          } after ${Math.round(delay / 1000)}s...`
-        );
-      },
-    };
+    const retryConfig: RetryOptions = this.getRetryConfig();
 
     // Process Deleted
     if (del.length > 0) {

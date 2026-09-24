@@ -50,6 +50,33 @@ describe('#YAML context branding templates', () => {
     });
   });
 
+  it('should throw when branding template body path resolves outside the config directory', async () => {
+    const baseDir = path.join(testDataDir, 'yaml', 'branding-traversal-warn');
+    const dir = path.join(baseDir, 'branding_templates');
+    cleanThenMkdir(dir);
+
+    // "../outside-branding.html" from inside branding_templates/ escapes the config root (dir).
+    const outsideFile = path.join(baseDir, 'outside-branding.html');
+    fs.writeFileSync(outsideFile, 'outside content');
+
+    const yaml = `
+    branding:
+      templates:
+        - template: universal_login
+          body: ../outside-branding.html
+    `;
+    const yamlFile = path.join(dir, 'config.yaml');
+    fs.writeFileSync(yamlFile, yaml);
+
+    const config = { AUTH0_INPUT_FILE: yamlFile };
+    const context = new Context(config, mockMgmtClient());
+    try {
+      await expect(context.loadAssetsFromLocal()).to.be.rejectedWith('Path traversal blocked');
+    } finally {
+      fs.removeSync(outsideFile);
+    }
+  });
+
   it('should dump branding settings, including templates', async () => {
     const dir = path.join(testDataDir, 'yaml', 'branding-dump');
     cleanThenMkdir(dir);

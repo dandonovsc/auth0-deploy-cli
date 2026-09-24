@@ -93,6 +93,32 @@ describe('#directory context branding', () => {
     expect(context.assets.branding).to.deep.equal(JSON.parse(brandingSettings));
   });
 
+  it('should throw when branding template body path resolves outside the config directory', async () => {
+    const dir = path.join(testDataDir, 'directory', 'branding-traversal-warn');
+    cleanThenMkdir(dir);
+    const brandingDir = path.join(dir, constants.BRANDING_DIRECTORY);
+    cleanThenMkdir(brandingDir);
+    const brandingTemplatesDir = path.join(brandingDir, constants.BRANDING_TEMPLATES_DIRECTORY);
+    cleanThenMkdir(brandingTemplatesDir);
+
+    // "../../../outside-branding.html" from inside branding/templates/ escapes the config root.
+    const outsideFile = path.join(testDataDir, 'directory', 'outside-branding.html');
+    fs.writeFileSync(outsideFile, 'outside content');
+
+    fs.writeFileSync(
+      path.join(brandingTemplatesDir, 'universal_login.json'),
+      JSON.stringify({ template: 'universal_login', body: '../../../outside-branding.html' })
+    );
+
+    const config = { AUTH0_INPUT_FILE: dir };
+    const context = new Context(config, mockMgmtClient());
+    try {
+      await expect(context.loadAssetsFromLocal()).to.be.rejectedWith('Path traversal blocked');
+    } finally {
+      fs.removeSync(outsideFile);
+    }
+  });
+
   it('should dump branding settings, including templates', async () => {
     const repoDir = path.join(testDataDir, 'directory', 'branding-dump');
     cleanThenMkdir(repoDir);

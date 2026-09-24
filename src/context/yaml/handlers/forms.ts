@@ -6,7 +6,7 @@ import { YAMLHandler } from '.';
 import YAMLContext from '..';
 import { ParsedAsset } from '../../../types';
 import { Form } from '../../../tools/auth0/handlers/forms';
-import { loadJSON, sanitize } from '../../../utils';
+import { loadJSON, sanitize, assertInsideConfigRoot } from '../../../utils';
 import constants from '../../../tools/constants';
 
 type ParsedForms = ParsedAsset<'forms', Partial<Form>[]>;
@@ -18,6 +18,9 @@ async function parse(context: YAMLContext): Promise<ParsedForms> {
 
   const parsedForms = forms.map((form: Form) => {
     const formFile = path.join(context.basePath, form.body);
+    const configRoot = path.resolve(context.basePath);
+    const resolvedFormFile = path.resolve(formFile);
+    assertInsideConfigRoot(form.body, resolvedFormFile, configRoot);
 
     const parsedFormBody = loadJSON(formFile, {
       mappings: context.mappings,

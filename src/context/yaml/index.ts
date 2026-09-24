@@ -11,7 +11,13 @@ import {
 import pagedClient from '../../tools/auth0/client';
 
 import log from '../../logger';
-import { isFile, toConfigFn, stripIdentifiers, formatResults, recordsSorter } from '../../utils';
+import {
+  toConfigFn,
+  stripIdentifiers,
+  formatResults,
+  recordsSorter,
+  assertInsideConfigRoot,
+} from '../../utils';
 import handlers, { YAMLHandler } from './handlers';
 import cleanAssets from '../../readonly';
 import { Assets, Config, Auth0APIClient, AssetTypes, KeywordMappings } from '../../types';
@@ -131,17 +137,10 @@ export default class YAMLContext {
   }
 
   loadFile(f) {
-    let toLoad = path.join(this.basePath, f);
-    if (!isFile(toLoad)) {
-      // try load not relative to yaml file
-      toLoad = f;
-      log.warn(
-        `Support for absolute paths and paths outside the config root will be deprecated in a future version to improve the security of the tool. ` +
-          `Please update your configuration to use paths relative to the config directory. ` +
-          `Current absolute path used: ["${f}"]`
-      );
-    }
-    return loadFileAndReplaceKeywords(path.resolve(toLoad), {
+    const configRoot = path.resolve(this.basePath);
+    const toLoad = path.resolve(this.basePath, f.replace(/\\/g, '/'));
+    assertInsideConfigRoot(f, toLoad, configRoot);
+    return loadFileAndReplaceKeywords(toLoad, {
       mappings: this.mappings,
       disableKeywordReplacement: this.disableKeywordReplacement,
     });

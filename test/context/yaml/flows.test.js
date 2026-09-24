@@ -39,6 +39,32 @@ describe('#YAML context flows', () => {
     expect(context.assets.flows).to.deep.equal(target);
   });
 
+  it('should throw when flow body path resolves outside the config directory', async () => {
+    const dir = path.join(testDataDir, 'yaml', 'flows');
+    cleanThenMkdir(dir);
+
+    const outsideFile = path.join(testDataDir, 'outside-flow.json');
+    fs.writeFileSync(outsideFile, '{"name": "outside flow"}');
+
+    const yaml = `
+    flows:
+      -
+        name: "Outside Flow"
+        body: ../../outside-flow.json
+    `;
+
+    const yamlFile = path.join(dir, 'flows.yaml');
+    fs.writeFileSync(yamlFile, yaml);
+
+    const config = { AUTH0_INPUT_FILE: yamlFile };
+    const context = new Context(config, mockMgmtClient());
+    try {
+      await expect(context.loadAssetsFromLocal()).to.be.rejectedWith('Path traversal blocked');
+    } finally {
+      fs.removeSync(outsideFile);
+    }
+  });
+
   it('should dump flows', async () => {
     const dir = path.join(testDataDir, 'yaml', 'flows');
     cleanThenMkdir(dir);
